@@ -1,4 +1,17 @@
-module Regex where
+module Regex
+    ( Regex (..)
+    , Sym (..)
+    , char
+    , string
+    , State (..)
+    , Transition (..)
+    , Transitions
+    , NFA (..)
+    , compile
+    , run
+    , checkRegex
+    , parseRegex
+    ) where
 
 import           Data.Bifunctor  (first)
 import           Data.Maybe      (fromMaybe)
@@ -128,14 +141,16 @@ runChar nfa c st = S.union
     (lookupTransition (st, SymTransition (Fixed c)) (transitions nfa))
     (lookupTransition (st, SymTransition Any)       (transitions nfa))
 
+flatRun :: (State -> S.Set State) -> S.Set State -> S.Set State
+flatRun f = mconcat . map f . S.toList
+
 runEps :: NFA -> State -> S.Set State
-runEps nfa st = S.insert st (lookupTransition (st, EpsTransition) (transitions nfa))
+runEps nfa st = S.insert st
+    $ flatRun (runEps nfa)
+    $ lookupTransition (st, EpsTransition) (transitions nfa)
 
 runStep :: NFA -> Char -> S.Set State -> S.Set State
 runStep nfa c = flatRun (runEps nfa) . flatRun (runChar nfa c)
-  where
-    flatRun :: (State -> S.Set State) -> S.Set State -> S.Set State
-    flatRun f = mconcat . map f . S.toList
 
 run :: NFA -> String -> Bool
 run nfa = any (`S.member` terminalStates nfa)
@@ -145,27 +160,34 @@ run nfa = any (`S.member` terminalStates nfa)
 checkRegex :: Regex -> String -> Bool
 checkRegex = run . compile
 
-type Parser = String -> (Regex, String)
+type Parser = String -> Maybe (Regex, String)
 
-parseRegex :: Parser
-parseRegex str = case parseConcat str of
-    (regex, '|':rest) -> first (regex :|) (parseRegex rest)
-    res               -> res
+parseRegex :: String -> Maybe Regex
+parseRegex str = case parseAlt str of
+    Just (regex, "") -> Just regex
+    _                -> Nothing
+
+parseAlt :: Parser
+parseAlt str = case parseConcat str of
+    Just (regex, '|':rest) -> first (regex :|) <$> (parseAlt rest)
+    res                    -> res
 
 parseConcat :: Parser
 parseConcat str = case parseRepeat str of
-    res@(regex, rest@(c:_)) -> if elem c ")|" then res else first (regex :+) (parseRegex rest)
-    res                     -> res
+    Just (res@(regex, rest@(c:_))) -> if elem c ")|"
+        then Just res
+        else first (regex :+) <$> (parseAlt rest)
+    res -> res
 
 parseRepeat :: Parser
 parseRepeat str = case parseSym str of
-    (regex, '*':rest) -> (Repeat regex, rest)
-    res               -> res
+    Just (regex, '*':rest) -> Just (Repeat regex, rest)
+    res                    -> res
 
 parseSym :: Parser
-parseSym ('.':rest) = (SymRegex Any, rest)
-parseSym ('(':rest) = case parseRegex rest of
-    (regex, ')':rest') -> (regex, rest')
-    _                  -> error "can't find closing bracket"
-parseSym (c:rest) = if elem c ")|*" then error "can't parse sym" else (char c, rest)
-parseSym [] = error "can't parse sym"
+parseSym ('.':rest) = Just (SymRegex Any, rest)
+parseSym ('(':rest) = case parseAlt rest of
+    Just (regex, ')':rest') -> Just (regex, rest')
+    _                       -> Nothing
+parseSym (c:rest) = if elem c ")|*" then Nothing else Just (char c, rest)
+parseSym [] = Nothing

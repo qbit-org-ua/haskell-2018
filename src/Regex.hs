@@ -1,5 +1,6 @@
 module Regex where
 
+import           Data.Bifunctor  (first)
 import           Data.Maybe      (fromMaybe)
 
 import qualified Data.Map.Strict as M
@@ -143,3 +144,28 @@ run nfa = any (`S.member` terminalStates nfa)
 
 checkRegex :: Regex -> String -> Bool
 checkRegex = run . compile
+
+type Parser = String -> (Regex, String)
+
+parseRegex :: Parser
+parseRegex str = case parseConcat str of
+    (regex, '|':rest) -> first (regex :|) (parseRegex rest)
+    res               -> res
+
+parseConcat :: Parser
+parseConcat str = case parseRepeat str of
+    res@(regex, rest@(c:_)) -> if elem c ")|" then res else first (regex :+) (parseRegex rest)
+    res                     -> res
+
+parseRepeat :: Parser
+parseRepeat str = case parseSym str of
+    (regex, '*':rest) -> (Repeat regex, rest)
+    res               -> res
+
+parseSym :: Parser
+parseSym ('.':rest) = (SymRegex Any, rest)
+parseSym ('(':rest) = case parseRegex rest of
+    (regex, ')':rest') -> (regex, rest')
+    _                  -> error "can't find closing bracket"
+parseSym (c:rest) = if elem c ")|*" then error "can't parse sym" else (char c, rest)
+parseSym [] = error "can't parse sym"

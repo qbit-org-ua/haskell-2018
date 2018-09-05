@@ -1,4 +1,4 @@
-# Revision history for project
+# Revision history for regex
 
 ## 0.1.0.0 -- YYYY-mm-dd
 
